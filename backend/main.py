@@ -1,5 +1,6 @@
 import logging
 from typing import Optional
+from datetime import datetime
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Depends
@@ -8,7 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from database import get_db
 from get_osm_response import get_sustenance_by_position
 
-from models import Command, Message, User
+from models import Command, Message, User, Event, Place
 
 app = FastAPI(
     title='Event-Explorer-Backend',
@@ -221,13 +222,40 @@ class LocationRequest(BaseModel):
 
 
 @app.get('/location/')
-async def get_location(chat_id, latitude, longitude):
+async def get_location(chat_id, latitude, longitude, db=Depends(get_db)):
     """Функция отображения location."""
-    # chat_id = request.chat_id
-    # latitude = request.latitude
-    # longitude = request.longitude
     around = 200
+    current_time = datetime.now()
     locations = await get_sustenance_by_position(latitude, longitude, around)
+    for location in locations['elements']:
+        place_id = str(location['id'])
+
+        events_in_location = (
+            db.query(Event, User.telegram_username)
+            .join(User, Event.user_id == User.telegram_id)
+            .filter(
+                Event.place_id == place_id, Event.end_datetime > current_time)
+            .all()
+        )
+
+        if events_in_location:
+            events_info = []
+            for event, telegram_username in events_in_location:
+                event_info = {
+                    'name': event.name,
+                    'description': event.description,
+                    'place_id': event.place_id,
+                    'end_datetime': event.end_datetime,
+                    'id': event.id,
+                    'user_id': event.user_id,
+                    'start_datetime': event.start_datetime,
+                    'comment': event.comment,
+                    'telegram_username': telegram_username
+                }
+                events_info.append(event_info)
+
+            location['events'] = events_info
+
     return {'chat_id': chat_id, 'response': locations}
 
 
@@ -363,6 +391,55 @@ async def update_user(
         # raise HTTPException(status_code=500, detail='Database error')
         error_message = f'Database error: {str(e)}'
         raise HTTPException(status_code=500, detail=error_message)
+
+
+class EventRequest(BaseModel):
+    """Влидация handle_messages."""
+    name: str = Field(max_length=50)
+    description: str
+    chat_id: str
+    place_id: str = Field(max_length=250)
+    start_datetime: str
+    end_datetime: str
+
+
+@app.post('/events/')
+async def create_event(request: EventRequest, db=Depends(get_db)):
+    """Функция создания event."""
+    name = request.name
+    description = request.description
+    chat_id = request.chat_id
+    place_id = request.place_id
+    start_datetime = request.start_datetime
+    end_datetime = request.end_datetime
+    date_format = "%Y-%m-%dT%H:%M:%S.%f"
+
+    try:
+        existing_place = db.query(Place).filter(
+            Place.place_id == place_id).one_or_none()
+
+        if existing_place:
+            place = existing_place
+        else:
+            place = Place(place_id=place_id)
+
+        new_event = Event(
+            name=name,
+            description=description,
+            user_id=chat_id,
+            place=place,
+            start_datetime=datetime.strptime(start_datetime, date_format),
+            end_datetime=datetime.strptime(end_datetime, date_format)
+        )
+
+        db.add(new_event)
+        db.commit()
+
+        return {'chat_id': chat_id, 'response': 'Событие успешно создано'}
+
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(status_code=500, detail='Database error')
 
 
 if __name__ == '__main__':
