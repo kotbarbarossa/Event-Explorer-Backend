@@ -38,7 +38,8 @@ async def get_all_commands(db=Depends(get_db)):
             } for command in commands]
 
         return commands_data
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
+        logger.error(f'Ошибка при получении списка пользователей: {str(e)}')
         raise HTTPException(status_code=500, detail='Database error')
 
 
@@ -53,15 +54,17 @@ async def get_command(chat_id: str, command: str, db=Depends(get_db)):
                 db_command = db.query(Command).filter_by(
                     command='instruction_command_1').one_or_none()
                 if db_command is None:
-                    raise HTTPException(
-                        status_code=404,
-                        detail='Ошибка при запросе instruction_command_1')
-            except SQLAlchemyError:
+                    error = 'Ошибка при запросе instruction_command_1'
+                    logger.error(error)
+                    raise HTTPException(status_code=404, detail=error)
+            except SQLAlchemyError as e:
+                logger.error(f'{error}: {str(e)}')
                 raise HTTPException(status_code=500, detail='Database error')
 
         return {'chat_id': chat_id, 'response': db_command.response}
 
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
+        logger.error(f'Ошибка при получении команды: {str(e)}')
         raise HTTPException(status_code=500, detail='Database error')
 
 
@@ -83,11 +86,12 @@ async def create_command(request: CommandRequest, db=Depends(get_db)):
         new_command = Command(command=command, response=response)
         db.add(new_command)
         db.commit()
-
+        logger.info(f'Команда "{command}" успешно сохранена')
         return {'chat_id': chat_id, 'response': 'Команда успешно создана'}
 
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         db.rollback()
+        logger.error(f'Ошибка при создании команды: {str(e)}')
         raise HTTPException(status_code=500, detail='Database error')
 
 
@@ -106,14 +110,16 @@ async def update_command(
             db_command.command = new_command
             db_command.response = new_response
             db.commit()
+            logger.info(f'Команда "{new_command}" успешно изменена')
             return {'chat_id': chat_id,
                     'response': 'Команда успешно обновлена'}
 
         return HTTPException(
             status_code=404, detail='Такой команды не существует')
 
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         db.rollback()
+        logger.error(f'Ошибка при изменении команды: {str(e)}')
         raise HTTPException(status_code=500, detail='Database error')
 
 
@@ -135,7 +141,8 @@ async def get_all_messages(db=Depends(get_db)):
             } for message in messages]
 
         return messages_data
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
+        logger.error(f'Ошибка при получении списка сообщений: {str(e)}')
         raise HTTPException(status_code=500, detail='Database error')
 
 
@@ -153,12 +160,14 @@ async def get_message(chat_id: str, message: str, db=Depends(get_db)):
                     raise HTTPException(
                         status_code=404,
                         detail='Ошибка при запросе instruction_2')
-            except SQLAlchemyError:
+            except SQLAlchemyError as e:
+                logger.error(f'Database error: {str(e)}')
                 raise HTTPException(status_code=500, detail='Database error')
 
         return {'chat_id': chat_id, 'response': db_message.response}
 
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
+        logger.error(f'Ошибка при получении сообщения: {str(e)}')
         raise HTTPException(status_code=500, detail='Database error')
 
 
@@ -180,11 +189,12 @@ async def create_message(request: MessageRequest, db=Depends(get_db)):
         new_message = Message(message=message, response=response)
         db.add(new_message)
         db.commit()
-
+        logger.info(f'Сообщение "{message}" успешно создано')
         return {'chat_id': chat_id, 'response': 'Сообщение успешно создано'}
 
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         db.rollback()
+        logger.error(f'Ошибка при создании сообщения: {str(e)}')
         raise HTTPException(status_code=500, detail='Database error')
 
 
@@ -203,14 +213,16 @@ async def update_message(
             db_message.message = new_message
             db_message.response = new_response
             db.commit()
+            logger.info(f'Сообщение "{new_message}" успешно изменено')
             return {'chat_id': chat_id,
                     'response': 'Сообщение успешно обновлена'}
 
         return HTTPException(
             status_code=404, detail='Такого сообщения не существует')
 
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         db.rollback()
+        logger.error(f'Ошибка при изменении сообщения: {str(e)}')
         raise HTTPException(status_code=500, detail='Database error')
 
 
@@ -227,6 +239,11 @@ async def get_location(chat_id, latitude, longitude, db=Depends(get_db)):
     around = 200
     current_time = datetime.now()
     locations = await get_sustenance_by_position(latitude, longitude, around)
+    if locations.get('error'):
+        logger.error('Ошибка при запросе overpass-api.de')
+        raise HTTPException(
+                status_code=404,
+                detail='Ошибка при запросе локаций')
     for location in locations['elements']:
         place_id = str(location['id'])
 
@@ -281,7 +298,9 @@ async def get_user(chat_id: str, db=Depends(get_db)):
             'created_date': db_user.created_date,
             'modified_date': db_user.modified_date,
             }
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f'Ошибка при получении пользоватея {chat_id}: {str(e)}')
         raise HTTPException(status_code=500, detail='Database error')
 
 
@@ -311,9 +330,9 @@ async def get_all_users(db=Depends(get_db)):
 
         return users_data
     except SQLAlchemyError as e:
-        # raise HTTPException(status_code=500, detail='Database error')
-        error_message = f'Database error: {str(e)}'
-        raise HTTPException(status_code=500, detail=error_message)
+        db.rollback()
+        logger.error(f'Ошибка при получении списка пользователей: {str(e)}')
+        raise HTTPException(status_code=500, detail='Database error')
 
 
 class UserRequest(BaseModel):
@@ -350,16 +369,18 @@ async def create_user(request: UserRequest, db=Depends(get_db)):
             )
         db.add(new_user)
         db.commit()
-
+        logger.info(
+            f'Пользователь "{telegram_id}" - '
+            f'"{telegram_username}" успешно создан')
         return {
             'chat_id': telegram_id,
             'response': 'Пользователь успешно создан'}
 
     except SQLAlchemyError as e:
         db.rollback()
-        # raise HTTPException(status_code=500, detail='Database error')
-        error_message = f'Database error: {str(e)}'
-        raise HTTPException(status_code=500, detail=error_message)
+        logger.error(
+            f'Ошибка при создании пользователя {telegram_id}: {str(e)}')
+        raise HTTPException(status_code=500, detail='Database error')
 
 
 @app.put('/users/{chat_id}')
@@ -380,6 +401,9 @@ async def update_user(
             db_user.last_name = new_last_name
             db_user.language_code = new_language_code
             db.commit()
+            logger.info(
+                f'Пользователь "{chat_id}" - '
+                f'"{new_telegram_username}" изменен')
             return {'chat_id': chat_id,
                     'response': 'Сообщение успешно обновлена'}
 
@@ -388,9 +412,8 @@ async def update_user(
 
     except SQLAlchemyError as e:
         db.rollback()
-        # raise HTTPException(status_code=500, detail='Database error')
-        error_message = f'Database error: {str(e)}'
-        raise HTTPException(status_code=500, detail=error_message)
+        logger.error(f'Ошибка при изменении пользователя {chat_id}: {str(e)}')
+        raise HTTPException(status_code=500, detail='Database error')
 
 
 class EventRequest(BaseModel):
@@ -435,20 +458,23 @@ async def create_event(request: EventRequest, db=Depends(get_db)):
         db.add(new_event)
         db.commit()
 
+        logger.info(f'Событие "{name}" в "{place_id}" успешно создано')
+
         return {'chat_id': chat_id, 'response': 'Событие успешно создано'}
 
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         db.rollback()
+        logger.error(f'Ошибка при создании события: {str(e)}')
         raise HTTPException(status_code=500, detail='Database error')
 
 
 if __name__ == '__main__':
-    logging.basicConfig(
-        filename='Event_Explorer_back.log',
-        format='%(asctime)s - %(name)s - %(levelname)s - LINE: %(lineno)d'
-        ' - FUNCTION: %(funcName)s - MESSAGE: %(message)s',
-        level=logging.DEBUG,
-        filemode='w'
-    )
+    logger = logging.getLogger('backend_main_logger')
+    logger.setLevel(logging.DEBUG)
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    file_handler = logging.FileHandler('backend_main.log')
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
