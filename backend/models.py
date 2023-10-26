@@ -107,16 +107,16 @@ class User(Base):
     subscriptions = relationship(
         'User',
         secondary=user_subscriptions,
-        primaryjoin=id == user_subscriptions.c.subscriber_id,
-        secondaryjoin=id == user_subscriptions.c.user_id,
+        primaryjoin=telegram_id == user_subscriptions.c.subscriber_id,
+        secondaryjoin=user_subscriptions.c.user_id == telegram_id,
         back_populates='subscribers',
     )
 
     subscribers = relationship(
         'User',
         secondary=user_subscriptions,
-        primaryjoin=id == user_subscriptions.c.user_id,
-        secondaryjoin=id == user_subscriptions.c.subscriber_id,
+        primaryjoin=telegram_id == user_subscriptions.c.user_id,
+        secondaryjoin=telegram_id == user_subscriptions.c.subscriber_id,
         back_populates='subscriptions',
     )
 
@@ -133,8 +133,8 @@ class Place(Base):
     subscribers = relationship(
         'User',
         secondary=place_user_association,
-        primaryjoin=id == place_user_association.c.place_id,
-        secondaryjoin=User.id == place_user_association.c.user_id,
+        primaryjoin=place_id == place_user_association.c.place_id,
+        secondaryjoin=User.telegram_id == place_user_association.c.user_id,
         back_populates='favorite_places',
     )
 
@@ -158,7 +158,7 @@ class Event(Base):
         'User',
         secondary=event_participants,
         primaryjoin=id == event_participants.c.event_id,
-        secondaryjoin=User.id == event_participants.c.user_id,
+        secondaryjoin=User.telegram_id == event_participants.c.user_id,
         back_populates='events_participated',
     )
 
@@ -167,17 +167,17 @@ class Event(Base):
 User.favorite_places = relationship(
     'Place',
     secondary=place_user_association,
-    primaryjoin=User.id == place_user_association.c.user_id,
-    secondaryjoin=Place.id == place_user_association.c.place_id,
+    primaryjoin=User.telegram_id == place_user_association.c.user_id,
+    secondaryjoin=place_user_association.c.place_id == Place.place_id,
     back_populates='subscribers',
 )
 
 
 # Многие ко многим: пользователь участвует в событиях
 User.events_participated = relationship(
-    'Event',
-    secondary=event_participants,
-    primaryjoin=User.id == event_participants.c.user_id,
-    secondaryjoin=Event.id == event_participants.c.event_id,
-    back_populates='participants',
-)
+        'Event',
+        secondary=event_participants,
+        primaryjoin=(User.telegram_id == event_participants.c.user_id),
+        secondaryjoin=(event_participants.c.event_id == Event.id),
+        back_populates='participants',
+    )

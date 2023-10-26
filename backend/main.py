@@ -3,7 +3,7 @@ from typing import Optional
 from datetime import datetime
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends  # , Request
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 from database import get_db
@@ -16,13 +16,16 @@ app = FastAPI(
     debug=True
 )
 
+tm = datetime.now().strftime("%H:%M")
 
-@app.get('/')
+
+@app.get('/', tags=[
+    f'Привет покоритель космических пространств! Время на борту: {tm}'])
 def read_root():
     return {'Hello': 'World'}
 
 
-@app.get('/admin/commands_list/')
+@app.get('/admin/commands_list/', tags=['Commands'])
 async def get_all_commands(db=Depends(get_db)):
     """Функция получения всех command."""
     try:
@@ -43,7 +46,7 @@ async def get_all_commands(db=Depends(get_db)):
         raise HTTPException(status_code=500, detail='Database error')
 
 
-@app.get('/commands/{command}')
+@app.get('/commands/{command}', tags=['Commands'])
 async def get_command(chat_id: str, command: str, db=Depends(get_db)):
     """Функция получения ответа на command."""
     try:
@@ -75,7 +78,7 @@ class CommandRequest(BaseModel):
     response: str = Field(max_length=250)
 
 
-@app.post('/admin/commands/')
+@app.post('/admin/commands/', tags=['Commands'])
 async def create_command(request: CommandRequest, db=Depends(get_db)):
     """Функция создания command."""
     chat_id = request.chat_id
@@ -95,7 +98,7 @@ async def create_command(request: CommandRequest, db=Depends(get_db)):
         raise HTTPException(status_code=500, detail='Database error')
 
 
-@app.put('/admin/commands/{command_id}')
+@app.put('/admin/commands/{command_id}', tags=['Commands'])
 async def update_command(
         command_id: int, request: CommandRequest, db=Depends(get_db)):
     """Функция обновления command по id."""
@@ -123,7 +126,7 @@ async def update_command(
         raise HTTPException(status_code=500, detail='Database error')
 
 
-@app.get('/admin/messages_list/')
+@app.get('/admin/messages_list/', tags=['Messages'])
 async def get_all_messages(db=Depends(get_db)):
     """Функция получения всех message."""
     try:
@@ -146,7 +149,7 @@ async def get_all_messages(db=Depends(get_db)):
         raise HTTPException(status_code=500, detail='Database error')
 
 
-@app.get('/messages/{message}')
+@app.get('/messages/{message}', tags=['Messages'])
 async def get_message(chat_id: str, message: str, db=Depends(get_db)):
     """Функция получения ответа на message."""
     try:
@@ -178,7 +181,7 @@ class MessageRequest(BaseModel):
     response: str = Field(max_length=1000)
 
 
-@app.post('/admin/messages/')
+@app.post('/admin/messages/', tags=['Messages'])
 async def create_message(request: MessageRequest, db=Depends(get_db)):
     """Функция создания message."""
     chat_id = request.chat_id
@@ -198,7 +201,7 @@ async def create_message(request: MessageRequest, db=Depends(get_db)):
         raise HTTPException(status_code=500, detail='Database error')
 
 
-@app.put('/admin/messages/{message_id}')
+@app.put('/admin/messages/{message_id}', tags=['Messages'])
 async def update_message(
         message_id: int, request: MessageRequest, db=Depends(get_db)):
     """Функция обновления command по id."""
@@ -233,7 +236,7 @@ class LocationRequest(BaseModel):
     longitude: float
 
 
-@app.get('/location/')
+@app.get('/location/', tags=['Locations'])
 async def get_location(chat_id, latitude, longitude, db=Depends(get_db)):
     """Функция отображения location."""
     around = 200
@@ -251,7 +254,8 @@ async def get_location(chat_id, latitude, longitude, db=Depends(get_db)):
             db.query(Event, User.telegram_username)
             .join(User, Event.user_id == User.telegram_id)
             .filter(
-                Event.place_id == place_id, Event.end_datetime > current_time)
+                Event.place_id == place_id,
+                Event.end_datetime > current_time)
             .all()
         )
 
@@ -267,7 +271,8 @@ async def get_location(chat_id, latitude, longitude, db=Depends(get_db)):
                     'user_id': event.user_id,
                     'start_datetime': event.start_datetime,
                     'comment': event.comment,
-                    'telegram_username': telegram_username
+                    'telegram_username': telegram_username,
+                    'event_participants': event.participants
                 }
                 events_info.append(event_info)
 
@@ -276,35 +281,7 @@ async def get_location(chat_id, latitude, longitude, db=Depends(get_db)):
     return {'chat_id': chat_id, 'response': locations}
 
 
-@app.get('/users/{chat_id}')
-async def get_user(chat_id: str, db=Depends(get_db)):
-    """Функция получения user."""
-    try:
-        db_user = db.query(User).filter_by(telegram_id=chat_id).one_or_none()
-
-        if db_user is None:
-            raise HTTPException(
-                status_code=404,
-                detail='Ошибка при запросе user')
-        return {
-            'id': db_user.id,
-            'telegram_id': db_user.telegram_id,
-            'telegram_username': db_user.telegram_username,
-            'role': db_user.role,
-            'first_name': db_user.first_name,
-            'last_name': db_user.last_name,
-            'language_code': db_user.language_code,
-            'is_bot': db_user.is_bot,
-            'created_date': db_user.created_date,
-            'modified_date': db_user.modified_date,
-            }
-    except SQLAlchemyError as e:
-        db.rollback()
-        logger.error(f'Ошибка при получении пользоватея {chat_id}: {str(e)}')
-        raise HTTPException(status_code=500, detail='Database error')
-
-
-@app.get('/admin/users_list/')
+@app.get('/admin/users_list/', tags=['Users'])
 async def get_all_users(db=Depends(get_db)):
     """Функция получения всех user."""
     try:
@@ -335,6 +312,34 @@ async def get_all_users(db=Depends(get_db)):
         raise HTTPException(status_code=500, detail='Database error')
 
 
+@app.get('/users/{chat_id}', tags=['Users'])
+async def get_user(chat_id: str, db=Depends(get_db)):
+    """Функция получения user."""
+    try:
+        db_user = db.query(User).filter_by(telegram_id=chat_id).one_or_none()
+
+        if db_user is None:
+            raise HTTPException(
+                status_code=404,
+                detail='Ошибка при запросе user')
+        return {
+            'id': db_user.id,
+            'telegram_id': db_user.telegram_id,
+            'telegram_username': db_user.telegram_username,
+            'role': db_user.role,
+            'first_name': db_user.first_name,
+            'last_name': db_user.last_name,
+            'language_code': db_user.language_code,
+            'is_bot': db_user.is_bot,
+            'created_date': db_user.created_date,
+            'modified_date': db_user.modified_date,
+            }
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f'Ошибка при получении пользоватея {chat_id}: {str(e)}')
+        raise HTTPException(status_code=500, detail='Database error')
+
+
 class UserRequest(BaseModel):
     """Влидация handle_messages."""
     chat_id: str
@@ -346,7 +351,7 @@ class UserRequest(BaseModel):
     is_bot: bool
 
 
-@app.post('/users/')
+@app.post('/users/', tags=['Users'])
 async def create_user(request: UserRequest, db=Depends(get_db)):
     """Функция создания user."""
     telegram_id = request.chat_id
@@ -383,7 +388,7 @@ async def create_user(request: UserRequest, db=Depends(get_db)):
         raise HTTPException(status_code=500, detail='Database error')
 
 
-@app.put('/users/{chat_id}')
+@app.put('/users/{chat_id}', tags=['Users'])
 async def update_user(
         chat_id: str, request: UserRequest, db=Depends(get_db)):
     """Функция обновления user по chat_id."""
@@ -417,7 +422,7 @@ async def update_user(
 
 
 class EventRequest(BaseModel):
-    """Влидация handle_messages."""
+    """Влидация create_event."""
     name: str = Field(max_length=50)
     description: str
     chat_id: str
@@ -426,7 +431,7 @@ class EventRequest(BaseModel):
     end_datetime: str
 
 
-@app.post('/events/')
+@app.post('/events/', tags=['Events'])
 async def create_event(request: EventRequest, db=Depends(get_db)):
     """Функция создания event."""
     name = request.name
@@ -468,7 +473,129 @@ async def create_event(request: EventRequest, db=Depends(get_db)):
         raise HTTPException(status_code=500, detail='Database error')
 
 
+class EventSubscriptionRequest(BaseModel):
+    """Влидация create_event_subscription."""
+    chat_id: str
+    event_id: int
+
+
+@app.post('/events/subscription/', tags=['Events subscription'])
+async def create_event_subscription(
+        request: EventSubscriptionRequest,
+        db=Depends(get_db)):
+    """Функция создания подписки на event."""
+    chat_id = request.chat_id
+    event_id = request.event_id
+
+    try:
+
+        user = db.query(User).filter_by(telegram_id=chat_id).first()
+        event = db.query(Event).filter_by(id=event_id).first()
+
+        if user is not None and event is not None:
+            user.events_participated.append(event)
+            db.commit()
+            logger.info(
+                f'Участие пользователя:"{chat_id}" '
+                f'в событии id:"{event_id}" успешно создано')
+            return {
+                'user_id': chat_id,
+                'event_id': event_id,
+                'response': 'Участие подтверждено'}
+        else:
+            error = 'Пользователь или событие не найдены'
+            logger.error(error)
+            raise HTTPException(status_code=404, detail=error)
+
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f'Ошибка при создании подписки на событие: {str(e)}')
+        raise HTTPException(status_code=500, detail='Database error')
+
+
+class PlaceSubscriptionRequest(BaseModel):
+    """Влидация create_place_subscription."""
+    chat_id: str
+    place_id: str
+
+
+@app.post('/places/subscription/', tags=['Events subscription'])
+async def create_place_subscription(
+        request: PlaceSubscriptionRequest,
+        db=Depends(get_db)):
+    """Функция создания подписки на place."""
+    chat_id = request.chat_id
+    place_id = request.place_id
+
+    try:
+
+        user = db.query(User).filter_by(telegram_id=chat_id).first()
+        place = db.query(Place).filter_by(place_id=place_id).first()
+
+        if user is not None and place is not None:
+            user.favorite_places.append(place)
+            db.commit()
+            logger.info(
+                f'Пользователь:"{chat_id}" '
+                f'Добавил место id:"{place_id}" в избранное')
+            return {
+                'user_id': chat_id,
+                'place_id': place_id,
+                'response': 'Добавлено в избранное'}
+        else:
+            error = 'Пользователь или место не найдены'
+            logger.error(error)
+            raise HTTPException(status_code=404, detail=error)
+
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f'Ошибка при добавление места в избранное: {str(e)}')
+        raise HTTPException(status_code=500, detail='Database error')
+
+
+class UserSubscriptionRequest(BaseModel):
+    """Влидация create_user_subscription."""
+    chat_id: str
+    telegram_id: str
+
+
+@app.post('/users/subscription/', tags=['Events subscription'])
+async def create_user_subscription(
+        request: UserSubscriptionRequest,
+        db=Depends(get_db)):
+    """Функция создания подписки на User."""
+    chat_id = request.chat_id
+    telegram_id = request.telegram_id
+
+    try:
+
+        chat_user = db.query(User).filter_by(telegram_id=chat_id).first()
+        user = db.query(User).filter_by(telegram_id=telegram_id).first()
+
+        if chat_user is not None and user is not None:
+            user.subscriptions.append(user)
+            db.commit()
+            logger.info(
+                f'Пользователь:"{chat_id}" '
+                f'Подписался на:"{user}"')
+            return {
+                'user_id': chat_id,
+                'telegram_id': telegram_id,
+                'response': 'Подписка прошла удачно'}
+        else:
+            error = 'Пользователь или пользователь не найдены'
+            logger.error(error)
+            raise HTTPException(status_code=404, detail=error)
+
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(
+            f'Ошибка при добавление пользователя в избранное: {str(e)}')
+        raise HTTPException(status_code=500, detail='Database error')
+
+
 if __name__ == '__main__':
+
     logger = logging.getLogger('backend_main_logger')
     logger.setLevel(logging.DEBUG)
     formatter = logging.Formatter(
@@ -476,5 +603,19 @@ if __name__ == '__main__':
     file_handler = logging.FileHandler('backend_main.log')
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
+
+    # handler = logging.StreamHandler()
+    # handler.setFormatter(formatter)
+    # logger.addHandler(handler)
+
+    # async def log_request(request: Request, call_next):
+    #     body = await request.body()
+    #     logger.info(
+    #         f"Request: {request.method} {request.url} - '
+    #         f'Body: {body.decode()}")
+    #     response = await call_next(request)
+    #     return response
+
+    # app.middleware("http")(log_request)
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
