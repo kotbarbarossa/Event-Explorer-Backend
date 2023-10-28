@@ -3,13 +3,14 @@ from typing import Optional
 from datetime import datetime
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Depends  # , Request
+from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import desc, join
 from database import get_db
-from get_osm_response import get_sustenance_by_position
+from get_osm_response import get_sustenance_by_position, get_places_by_id
 
-from models import Command, Message, User, Event, Place
+from models import Command, Message, User, Event, Place, place_user_association
 
 app = FastAPI(
     title='Event-Explorer-Backend',
@@ -281,6 +282,81 @@ async def get_location(chat_id, latitude, longitude, db=Depends(get_db)):
     return {'chat_id': chat_id, 'response': locations}
 
 
+@app.get('/users/places_subscription/{chat_id}', tags=['Users'])
+async def get_user_places_subscription(chat_id: str, db=Depends(get_db)):
+    """Функция получения ответа на command."""
+    try:
+        user_places_subscription = (
+            db.query(place_user_association.c.place_id)
+            .select_from(
+                join(
+                    User,
+                    place_user_association,
+                    User.telegram_id == place_user_association.c.user_id)
+            )
+            .filter(User.telegram_id == chat_id)
+        )
+
+        place_ids = [result[0] for result in user_places_subscription.all()]
+
+        if not place_ids:
+            try:
+                db_message = db.query(Message).filter_by(
+                    message='places_sub_instruction_1').one_or_none()
+                if db_message is None:
+                    error = 'Ошибка при запросе places_sub_instruction_1'
+                    logger.error(error)
+                    raise HTTPException(status_code=404, detail=error)
+                return {'chat_id': chat_id, 'response': db_message.response}
+            except SQLAlchemyError as e:
+                logger.error(f'error: {str(e)}')
+                raise HTTPException(status_code=500, detail='Database error')
+
+        current_time = datetime.now()
+        locations = await get_places_by_id(place_ids)
+        if locations.get('error'):
+            logger.error('Ошибка при запросе overpass-api.de')
+            raise HTTPException(
+                    status_code=404,
+                    detail='Ошибка при запросе локаций')
+        for location in locations['elements']:
+            place_id = str(location['id'])
+
+            events_in_location = (
+                db.query(Event, User.telegram_username)
+                .join(User, Event.user_id == User.telegram_id)
+                .filter(
+                    Event.place_id == place_id,
+                    Event.end_datetime > current_time)
+                .all()
+            )
+
+            if events_in_location:
+                events_info = []
+                for event, telegram_username in events_in_location:
+                    event_info = {
+                        'name': event.name,
+                        'description': event.description,
+                        'place_id': event.place_id,
+                        'end_datetime': event.end_datetime,
+                        'id': event.id,
+                        'user_id': event.user_id,
+                        'start_datetime': event.start_datetime,
+                        'comment': event.comment,
+                        'telegram_username': telegram_username,
+                        'event_participants': event.participants
+                    }
+                    events_info.append(event_info)
+
+                location['events'] = events_info
+
+        return {'chat_id': chat_id, 'response': locations['elements']}
+
+    except SQLAlchemyError as e:
+        logger.error(f'Ошибка при получении команды: {str(e)}')
+        raise HTTPException(status_code=500, detail='Database error')
+
+
 @app.get('/admin/users_list/', tags=['Users'])
 async def get_all_users(db=Depends(get_db)):
     """Функция получения всех user."""
@@ -421,6 +497,41 @@ async def update_user(
         raise HTTPException(status_code=500, detail='Database error')
 
 
+async def is_event_finished(event):
+    current_time = datetime.now()
+    return event < current_time
+
+
+@app.get('/admin/events_list/', tags=['Events'])
+async def get_all_events(db=Depends(get_db)):
+    """Функция получения всех Events."""
+    try:
+        events = db.query(Event).order_by(desc(Event.start_datetime)).all()
+
+        if not events:
+            raise HTTPException(
+                status_code=404,
+                detail='Нет доступных событий')
+
+        events_data = [{
+            'id': event.id,
+            'name': event.name,
+            'description': event.description,
+            'user_id': event.user_id,
+            'place_id': event.place_id,
+            'start_datetime': event.start_datetime,
+            'end_datetime': event.end_datetime,
+            'comment': event.comment,
+            'is_finished': await is_event_finished(event.end_datetime),
+            } for event in events]
+
+        return events_data
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f'Ошибка при получении списка событий: {str(e)}')
+        raise HTTPException(status_code=500, detail='Database error')
+
+
 class EventRequest(BaseModel):
     """Влидация create_event."""
     name: str = Field(max_length=50)
@@ -519,7 +630,44 @@ class PlaceSubscriptionRequest(BaseModel):
     place_id: str
 
 
-@app.post('/places/subscription/', tags=['Events subscription'])
+@app.get('/admin/places/subscription_list/', tags=['Places'])
+async def get_all_places_subscription(db=Depends(get_db)):
+    """Функция получения всех places subscription."""
+    try:
+        users = db.query(User).all()
+
+        if not users:
+            raise HTTPException(
+                status_code=404,
+                detail='Нет доступных подписок на места')
+
+        events_data = []
+        for user in users:
+            user_dict = {
+                "telegram_id": user.telegram_id,
+                "telegram_username": user.telegram_username,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "favorite_places": []
+            }
+            if user.favorite_places:
+                for place in user.favorite_places:
+                    place_dict = {
+                        'place_id': place.place_id,
+                        'places_name': place.name
+                    }
+                    user_dict['favorite_places'].append(place_dict)
+            events_data.append(user_dict)
+
+        return events_data
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(
+            f'Ошибка при получении списка подписок на места: {str(e)}')
+        raise HTTPException(status_code=500, detail='Database error')
+
+
+@app.post('/places/subscription/', tags=['Places'])
 async def create_place_subscription(
         request: PlaceSubscriptionRequest,
         db=Depends(get_db)):
@@ -577,7 +725,7 @@ async def create_user_subscription(
             db.commit()
             logger.info(
                 f'Пользователь:"{chat_id}" '
-                f'Подписался на:"{user}"')
+                f'Подписался на:"{telegram_id}"')
             return {
                 'user_id': chat_id,
                 'telegram_id': telegram_id,
