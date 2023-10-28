@@ -3,7 +3,7 @@ from typing import Optional
 from datetime import datetime
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import desc, join
@@ -698,6 +698,42 @@ async def create_place_subscription(
     except SQLAlchemyError as e:
         db.rollback()
         logger.error(f'Ошибка при добавление места в избранное: {str(e)}')
+        raise HTTPException(status_code=500, detail='Database error')
+
+
+@app.delete('/places/subscription/', tags=['Places'])
+async def delete_place_subscription(
+        chat_id: str = Query(...),
+        place_id: str = Query(...),
+        db=Depends(get_db)):
+    """Функция удаления подписки на place."""
+
+    try:
+        user = db.query(User).filter(
+            User.telegram_id == chat_id,
+            User.favorite_places.any(Place.place_id == place_id)
+        ).one_or_none()
+
+        if user:
+            place = db.query(Place).filter(Place.place_id == place_id).first()
+            if place:
+                user.favorite_places.remove(place)
+                db.commit()
+                logger.info(
+                    f'Пользователь:"{chat_id}" '
+                    f'Удалил место id:"{place_id}" из избранного')
+                return {
+                    'user_id': chat_id,
+                    'place_id': place_id,
+                    'response': 'Удалено избранное'}
+        else:
+            error = 'Подписка не найдена'
+            logger.error(error)
+            raise HTTPException(status_code=404, detail=error)
+
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f'Ошибка при удалении места из избранного: {str(e)}')
         raise HTTPException(status_code=500, detail='Database error')
 
 
