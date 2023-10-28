@@ -8,7 +8,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import desc, join
 from database import get_db
-from get_osm_response import get_sustenance_by_position, get_places_by_id
+from get_osm_response import (get_sustenance_by_position, 
+                              get_places_by_id, get_search_by_name)
 
 from models import Command, Message, User, Event, Place, place_user_association
 
@@ -280,6 +281,52 @@ async def get_location(chat_id, latitude, longitude, db=Depends(get_db)):
             location['events'] = events_info
 
     return {'chat_id': chat_id, 'response': locations}
+
+
+@app.get('/location/search/', tags=['Locations'])
+async def get_location_search_by_name(
+        chat_id: str = Query(...),    
+        place_name: str = Query(...),
+        db=Depends(get_db)):
+    """Функция отображения поиска location."""
+    current_time = datetime.now()
+    locations = await get_search_by_name(place_name)
+    if locations.get('error'):
+        logger.error('Ошибка при запросе overpass-api.de')
+        raise HTTPException(
+                status_code=404,
+                detail='Ошибка при запросе локаций')
+    for location in locations['elements']:
+        place_id = str(location['id'])
+        events_in_location = (
+            db.query(Event, User.telegram_username)
+            .join(User, Event.user_id == User.telegram_id)
+            .filter(
+                Event.place_id == place_id,
+                Event.end_datetime > current_time)
+            .all()
+        )
+
+        if events_in_location:
+            events_info = []
+            for event, telegram_username in events_in_location:
+                event_info = {
+                    'name': event.name,
+                    'description': event.description,
+                    'place_id': event.place_id,
+                    'end_datetime': event.end_datetime,
+                    'id': event.id,
+                    'user_id': event.user_id,
+                    'start_datetime': event.start_datetime,
+                    'comment': event.comment,
+                    'telegram_username': telegram_username,
+                    'event_participants': event.participants
+                }
+                events_info.append(event_info)
+
+            location['events'] = events_info
+
+    return {'chat_id': chat_id, 'response': locations['elements']}
 
 
 @app.get('/users/places_subscription/{chat_id}', tags=['Users'])
@@ -679,8 +726,12 @@ async def create_place_subscription(
 
         user = db.query(User).filter_by(telegram_id=chat_id).first()
         place = db.query(Place).filter_by(place_id=place_id).first()
+        if not place:
+            place = Place(place_id=place_id)
+            db.add(place)
+            db.commit()
 
-        if user is not None and place is not None:
+        if user is not None:
             user.favorite_places.append(place)
             db.commit()
             logger.info(
@@ -691,7 +742,7 @@ async def create_place_subscription(
                 'place_id': place_id,
                 'response': 'Добавлено в избранное'}
         else:
-            error = 'Пользователь или место не найдены'
+            error = 'Пользователь не найден'
             logger.error(error)
             raise HTTPException(status_code=404, detail=error)
 
