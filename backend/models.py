@@ -36,7 +36,6 @@ class Message(Base):
         self.response = response
 
 
-# Таблицы для связей между пользователями, местами и событиями
 user_subscriptions = Table(
     'user_subscriptions',
     Base.metadata,
