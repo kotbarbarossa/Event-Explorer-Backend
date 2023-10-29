@@ -9,7 +9,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import desc, join
 from database import get_db
 from get_osm_response import (get_sustenance_by_position,
-                              get_places_by_id, get_search_by_name)
+                              get_places_by_id, get_search_by_name,
+                              get_place_by_id)
 
 from models import Command, Message, User, Event, Place, place_user_association
 
@@ -337,6 +338,53 @@ async def get_location_search_by_name(
                 events_info.append(event_info)
 
             location['events'] = events_info
+
+    return {'telegram_id': telegram_id, 'response': locations}
+
+
+@app.get('/places/{place_id}/', tags=['Places'])
+async def get_place_detail(
+        place_id: str,
+        telegram_id: str = Query(...),
+        db=Depends(get_db)):
+    """Функция отображения поиска place detail."""
+    current_time = datetime.now()
+    locations = await get_place_by_id(place_id=place_id)
+    if locations.get('error'):
+        logger.error('Ошибка при запросе overpass-api.de')
+        raise HTTPException(
+                status_code=404,
+                detail='Ошибка при запросе локации')
+    location = locations['elements'][0]
+    place_id = str(location['id'])
+
+    events_in_location = (
+        db.query(Event, User.telegram_username)
+        .join(User, Event.user_id == User.telegram_id)
+        .filter(
+            Event.place_id == place_id,
+            Event.end_datetime > current_time)
+        .all()
+    )
+
+    if events_in_location:
+        events_info = []
+        for event, telegram_username in events_in_location:
+            event_info = {
+                'name': event.name,
+                'description': event.description,
+                'place_id': event.place_id,
+                'end_datetime': event.end_datetime,
+                'id': event.id,
+                'user_id': event.user_id,
+                'start_datetime': event.start_datetime,
+                'comment': event.comment,
+                'telegram_username': telegram_username,
+                'event_participants': event.participants
+            }
+            events_info.append(event_info)
+
+        location['events'] = events_info
 
     return {'telegram_id': telegram_id, 'response': locations}
 
