@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import desc, join
 from database import get_db
-from get_osm_response import (get_sustenance_by_position, 
+from get_osm_response import (get_sustenance_by_position,
                               get_places_by_id, get_search_by_name)
 
 from models import Command, Message, User, Event, Place, place_user_association
@@ -239,7 +239,11 @@ class LocationRequest(BaseModel):
 
 
 @app.get('/location/', tags=['Locations'])
-async def get_location(chat_id, latitude, longitude, db=Depends(get_db)):
+async def get_location(
+        chat_id: str = Query(...),
+        latitude: str = Query(...),
+        longitude: str = Query(...),
+        db=Depends(get_db)):
     """Функция отображения location."""
     around = 200
     current_time = datetime.now()
@@ -285,7 +289,7 @@ async def get_location(chat_id, latitude, longitude, db=Depends(get_db)):
 
 @app.get('/location/search/', tags=['Locations'])
 async def get_location_search_by_name(
-        chat_id: str = Query(...),    
+        chat_id: str = Query(...),
         place_name: str = Query(...),
         db=Depends(get_db)):
     """Функция отображения поиска location."""
@@ -326,7 +330,7 @@ async def get_location_search_by_name(
 
             location['events'] = events_info
 
-    return {'chat_id': chat_id, 'response': locations['elements']}
+    return {'chat_id': chat_id, 'response': locations}
 
 
 @app.get('/users/places_subscription/{chat_id}', tags=['Users'])
@@ -397,10 +401,59 @@ async def get_user_places_subscription(chat_id: str, db=Depends(get_db)):
 
                 location['events'] = events_info
 
-        return {'chat_id': chat_id, 'response': locations['elements']}
+        return {'chat_id': chat_id, 'response': locations}
 
     except SQLAlchemyError as e:
         logger.error(f'Ошибка при получении команды: {str(e)}')
+        raise HTTPException(status_code=500, detail='Database error')
+
+
+@app.get('/users/user_subscription/', tags=['Users'])
+async def get_user_subscription(
+        chat_id: str = Query(...),
+        db=Depends(get_db)):
+    """Функция получения подписок пользователей."""
+    try:
+        user = db.query(User).filter_by(telegram_id=chat_id).one_or_none()
+        subscriptions = [{
+            'telegram_id': user.telegram_id,
+            'telegram_username': user.telegram_username
+            } for user in user.subscriptions]
+        return {'chat_id': chat_id, 'response': subscriptions}
+
+    except SQLAlchemyError as e:
+        logger.error(
+            f'Ошибка при получении списка подписок пользователя: {str(e)}')
+        raise HTTPException(status_code=500, detail='Database error')
+
+
+@app.delete('/users/user_subscription/', tags=['Users'])
+async def delete_user_subscription(
+        chat_id: str = Query(...),
+        telegram_id: str = Query(...),
+        db=Depends(get_db)):
+    """Функция удаления подписок пользователей."""
+    try:
+        user = db.query(User).filter_by(telegram_id=chat_id).one_or_none()
+        subscription = db.query(User).filter_by(
+            telegram_id=telegram_id).one_or_none()
+        if user and subscription:
+            if subscription in user.subscriptions:
+                user.subscriptions.remove(subscription)
+                db.commit()
+                return {'chat_id': chat_id, 'response': []}
+            else:
+                error = 'Подписка не найдена'
+                logger.error(error)
+                raise HTTPException(status_code=404, detail=error)
+        else:
+            error = 'Пользователь не найден'
+            logger.error(error)
+            raise HTTPException(status_code=404, detail=error)
+
+    except SQLAlchemyError as e:
+        logger.error(
+            f'Ошибка при получении списка подписок пользователя: {str(e)}')
         raise HTTPException(status_code=500, detail='Database error')
 
 
@@ -807,8 +860,10 @@ async def create_user_subscription(
         chat_user = db.query(User).filter_by(telegram_id=chat_id).first()
         user = db.query(User).filter_by(telegram_id=telegram_id).first()
 
-        if chat_user is not None and user is not None:
-            user.subscriptions.append(user)
+        if chat_user and user:
+            if chat_user == user:
+                return {'error': 'Нельзя подписываться на самого себя!'}
+            chat_user.subscriptions.append(user)
             db.commit()
             logger.info(
                 f'Пользователь:"{chat_id}" '
@@ -818,7 +873,7 @@ async def create_user_subscription(
                 'telegram_id': telegram_id,
                 'response': 'Подписка прошла удачно'}
         else:
-            error = 'Пользователь или пользователь не найдены'
+            error = 'Пользователь не найден'
             logger.error(error)
             raise HTTPException(status_code=404, detail=error)
 

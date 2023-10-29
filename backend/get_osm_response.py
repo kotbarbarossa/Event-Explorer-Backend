@@ -48,6 +48,7 @@ async def get_places_by_id(place_ids: list[str]):
 
 
 async def get_search_by_name(place_name: str):
+    SEARCH_LIMIT = 10
     url = ('https://overpass-api.de/api/interpreter?data=[out:json];'
            'node['
            'amenity~'
@@ -61,7 +62,7 @@ async def get_search_by_name(place_name: str):
            'restaurant"'
            ']'
            f'["name"="{place_name}"];'
-           'out;')
+           f'out {SEARCH_LIMIT};')
     async with httpx.AsyncClient() as client:
         response = await client.get(url)
 

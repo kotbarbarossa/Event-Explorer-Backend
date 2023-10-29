@@ -1,6 +1,7 @@
 from sqlalchemy import (Column, Integer, String,
                         MetaData, DateTime, Boolean,
-                        Enum, Text, ForeignKey, Table)
+                        Enum, Text, ForeignKey, Table,
+                        CheckConstraint)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -40,15 +41,20 @@ user_subscriptions = Table(
     'user_subscriptions',
     Base.metadata,
     Column(
-        'subscriber_id',
-        String,
-        ForeignKey('users.telegram_id'),
-        primary_key=True),
-    Column(
         'user_id',
         String,
         ForeignKey('users.telegram_id'),
         primary_key=True),
+    Column(
+        'subscriber_id',
+        String,
+        ForeignKey('users.telegram_id'),
+        primary_key=True),
+
+    CheckConstraint(
+        ' user_id' != 'subscriber_id',
+        name='check_unique_constraint'
+    )
 )
 
 place_user_association = Table(
@@ -103,21 +109,20 @@ class User(Base):
     modified_date = Column(DateTime(timezone=True), onupdate=func.now())
     comment = Column(String, default='', nullable=True)
 
-    # Многие ко многим: пользователь подписывается на других пользователей
     subscriptions = relationship(
         'User',
         secondary=user_subscriptions,
-        primaryjoin=telegram_id == user_subscriptions.c.subscriber_id,
-        secondaryjoin=user_subscriptions.c.user_id == telegram_id,
-        back_populates='subscribers',
+        primaryjoin=telegram_id == user_subscriptions.c.user_id,
+        secondaryjoin=telegram_id == user_subscriptions.c.subscriber_id,
+        back_populates='subscribers'
     )
 
     subscribers = relationship(
         'User',
         secondary=user_subscriptions,
-        primaryjoin=telegram_id == user_subscriptions.c.user_id,
-        secondaryjoin=telegram_id == user_subscriptions.c.subscriber_id,
-        back_populates='subscriptions',
+        primaryjoin=telegram_id == user_subscriptions.c.subscriber_id,
+        secondaryjoin=telegram_id == user_subscriptions.c.user_id,
+        back_populates='subscriptions'
     )
 
 
@@ -163,7 +168,6 @@ class Event(Base):
     )
 
 
-# Многие ко многим: пользователь подписывается на места
 User.favorite_places = relationship(
     'Place',
     secondary=place_user_association,
@@ -173,7 +177,6 @@ User.favorite_places = relationship(
 )
 
 
-# Многие ко многим: пользователь участвует в событиях
 User.events_participated = relationship(
         'Event',
         secondary=event_participants,
