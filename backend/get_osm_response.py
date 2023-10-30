@@ -47,22 +47,31 @@ async def get_places_by_id(place_ids: list[str]):
         return {'error': 'Failed to get the response'}
 
 
-async def get_search_by_name(place_name: str):
+async def get_region_boundingbox(region_name: str):
+    overpass_url = ('https://nominatim.openstreetmap.org/'
+                    f'search?format=json&q={region_name}')
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(overpass_url)
+
+    if response.status_code == 200:
+        return response.json()[0]['boundingbox']
+    else:
+        return {'error': 'Failed to get the response'}
+
+
+async def get_search_by_name(region_name, place_name):
+    boundingbox = await get_region_boundingbox(region_name)
+    south, north, west, east = boundingbox
     SEARCH_LIMIT = 10
     url = ('https://overpass-api.de/api/interpreter?data=[out:json];'
-           'node['
-           'amenity~'
-           '"bar|'
-           'biergarten|'
-           'cafe|'
-           'fast_food|'
-           'food_court|'
-           'ice_cream|'
-           'pub|'
-           'restaurant"'
-           ']'
-           f'["name"="{place_name}"];'
-           f'out {SEARCH_LIMIT};')
+           'node[amenity~"'
+           'bar|biergarten|cafe|fast_food|food_court|ice_cream|pub|restaurant'
+           '"]'
+           f'["name"="{place_name}"]'
+           f'({south},{west},{north},{east})'
+           f';out {SEARCH_LIMIT};')
+
     async with httpx.AsyncClient() as client:
         response = await client.get(url)
 
@@ -82,6 +91,7 @@ async def get_place_by_id(place_id):
         return response.json()
     else:
         return {'error': 'Failed to get the response'}
+
 
 if __name__ == '__main__':
     result = asyncio.run(

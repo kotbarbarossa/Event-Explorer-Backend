@@ -299,11 +299,12 @@ async def get_location(
 @app.get('/locations/search/', tags=['Locations'])
 async def get_location_search_by_name(
         telegram_id: str = Query(...),
+        region_name: str = Query(...),
         place_name: str = Query(...),
         db=Depends(get_db)):
     """Функция отображения поиска location."""
     current_time = datetime.now()
-    locations = await get_search_by_name(place_name)
+    locations = await get_search_by_name(region_name, place_name)
     if locations.get('error'):
         logger.error('Ошибка при запросе overpass-api.de')
         raise HTTPException(
