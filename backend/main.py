@@ -1,11 +1,13 @@
 import logging
 from typing import Optional
 from datetime import datetime
+from typing import Union, Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 from sqlalchemy import desc, join
 from database import get_db
 from get_osm_response import (get_sustenance_by_position,
@@ -24,13 +26,15 @@ tm = datetime.now().strftime("%H:%M")
 
 @app.get('/', tags=[
     f'Привет покоритель космических пространств! Время на борту: {tm}'])
-def read_root():
+def read_root() -> Union[dict, Any]:
+    """Бесполезная функция приветствия в Swagger."""
     return {'Hello': 'World'}
 
 
 @app.get('/commands/', tags=['Commands'])
-async def get_all_commands(db=Depends(get_db)):
-    """Функция получения всех command."""
+async def get_all_commands(
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция получения всех команд."""
     try:
         commands = db.query(Command).all()
 
@@ -53,8 +57,8 @@ async def get_all_commands(db=Depends(get_db)):
 async def get_command(
         command: str,
         telegram_id: str = Query(...),
-        db=Depends(get_db)):
-    """Функция получения ответа на command."""
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция получения ответа на команду."""
     try:
         db_command = db.query(Command).filter_by(command=command).one_or_none()
 
@@ -78,15 +82,17 @@ async def get_command(
 
 
 class CommandRequest(BaseModel):
-    """Влидация для commands."""
+    """Влидация для команд."""
     telegram_id: str
     command: str = Field(max_length=50)
     response: str = Field(max_length=250)
 
 
 @app.post('/commands/', tags=['Commands'])
-async def create_command(request: CommandRequest, db=Depends(get_db)):
-    """Функция создания command."""
+async def create_command(
+        request: CommandRequest,
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция создания команды."""
     telegram_id = request.telegram_id
     command = request.command
     response = request.response
@@ -107,8 +113,10 @@ async def create_command(request: CommandRequest, db=Depends(get_db)):
 
 @app.put('/commands/{command}/', tags=['Commands'])
 async def update_command(
-        command: str, request: CommandRequest, db=Depends(get_db)):
-    """Функция обновления command по id."""
+        command: str,
+        request: CommandRequest,
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция обновления команды."""
     telegram_id = request.telegram_id
     new_command = request.command
     new_response = request.response
@@ -134,8 +142,9 @@ async def update_command(
 
 
 @app.get('/messages/', tags=['Messages'])
-async def get_all_messages(db=Depends(get_db)):
-    """Функция получения всех message."""
+async def get_all_messages(
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция получения всех сообщений."""
     try:
         messages = db.query(Message).all()
 
@@ -160,8 +169,8 @@ async def get_all_messages(db=Depends(get_db)):
 async def get_message(
         message: str,
         telegram_id: str = Query(...),
-        db=Depends(get_db)):
-    """Функция получения ответа на message."""
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция получения ответа на сообщение."""
     try:
         db_message = db.query(Message).filter_by(message=message).one_or_none()
 
@@ -185,15 +194,17 @@ async def get_message(
 
 
 class MessageRequest(BaseModel):
-    """Влидация handle_messages."""
+    """Влидация сообщений."""
     telegram_id: str
     message: str = Field(max_length=250)
     response: str = Field(max_length=1000)
 
 
 @app.post('/messages/', tags=['Messages'])
-async def create_message(request: MessageRequest, db=Depends(get_db)):
-    """Функция создания message."""
+async def create_message(
+        request: MessageRequest,
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция создания сообщения."""
     telegram_id = request.telegram_id
     message = request.message
     response = request.response
@@ -214,8 +225,10 @@ async def create_message(request: MessageRequest, db=Depends(get_db)):
 
 @app.put('/messages/{message}/', tags=['Messages'])
 async def update_message(
-        message: str, request: MessageRequest, db=Depends(get_db)):
-    """Функция обновления command по id."""
+        message: str,
+        request: MessageRequest,
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция обновления сообщения."""
     telegram_id = request.telegram_id
     new_message = request.message
     new_response = request.response
@@ -240,8 +253,27 @@ async def update_message(
         raise HTTPException(status_code=500, detail='Database error')
 
 
+async def parse_events(events_in_location):
+    events_info = []
+    for event, telegram_username in events_in_location:
+        event_info = {
+            'name': event.name,
+            'description': event.description,
+            'place_id': event.place_id,
+            'end_datetime': event.end_datetime,
+            'id': event.id,
+            'user_id': event.user_id,
+            'start_datetime': event.start_datetime,
+            'comment': event.comment,
+            'telegram_username': telegram_username,
+            'event_participants': event.participants
+        }
+        events_info.append(event_info)
+    return events_info
+
+
 class LocationRequest(BaseModel):
-    """Влидация handle_messages."""
+    """Влидация запроса получения мест по координатам."""
     telegram_id: str
     latitude: float
     longitude: float
@@ -252,7 +284,7 @@ async def get_location(
         telegram_id: str = Query(...),
         latitude: str = Query(...),
         longitude: str = Query(...),
-        db=Depends(get_db)):
+        db: Session = Depends(get_db)):
     """Функция отображения location."""
     around = 200
     current_time = datetime.now()
@@ -275,22 +307,7 @@ async def get_location(
         )
 
         if events_in_location:
-            events_info = []
-            for event, telegram_username in events_in_location:
-                event_info = {
-                    'name': event.name,
-                    'description': event.description,
-                    'place_id': event.place_id,
-                    'end_datetime': event.end_datetime,
-                    'id': event.id,
-                    'user_id': event.user_id,
-                    'start_datetime': event.start_datetime,
-                    'comment': event.comment,
-                    'telegram_username': telegram_username,
-                    'event_participants': event.participants
-                }
-                events_info.append(event_info)
-
+            events_info = await parse_events(events_in_location)
             location['events'] = events_info
 
     return {'telegram_id': telegram_id, 'response': locations}
@@ -301,8 +318,8 @@ async def get_location_search_by_name(
         telegram_id: str = Query(...),
         region_name: str = Query(...),
         place_name: str = Query(...),
-        db=Depends(get_db)):
-    """Функция отображения поиска location."""
+        db: Session = Depends(get_db)):
+    """Функция получения поиска мест по региону и названию."""
     current_time = datetime.now()
     locations = await get_search_by_name(region_name, place_name)
     if locations.get('error'):
@@ -322,22 +339,7 @@ async def get_location_search_by_name(
         )
 
         if events_in_location:
-            events_info = []
-            for event, telegram_username in events_in_location:
-                event_info = {
-                    'name': event.name,
-                    'description': event.description,
-                    'place_id': event.place_id,
-                    'end_datetime': event.end_datetime,
-                    'id': event.id,
-                    'user_id': event.user_id,
-                    'start_datetime': event.start_datetime,
-                    'comment': event.comment,
-                    'telegram_username': telegram_username,
-                    'event_participants': event.participants
-                }
-                events_info.append(event_info)
-
+            events_info = await parse_events(events_in_location)
             location['events'] = events_info
 
     return {'telegram_id': telegram_id, 'response': locations}
@@ -347,8 +349,8 @@ async def get_location_search_by_name(
 async def get_place_detail(
         place_id: str,
         telegram_id: str = Query(...),
-        db=Depends(get_db)):
-    """Функция отображения поиска place detail."""
+        db: Session = Depends(get_db)):
+    """Функция получения конкретного места по place_id."""
     current_time = datetime.now()
     locations = await get_place_by_id(place_id=place_id)
     if locations.get('error'):
@@ -369,72 +371,14 @@ async def get_place_detail(
     )
 
     if events_in_location:
-        events_info = []
-        for event, telegram_username in events_in_location:
-            event_info = {
-                'name': event.name,
-                'description': event.description,
-                'place_id': event.place_id,
-                'end_datetime': event.end_datetime,
-                'id': event.id,
-                'user_id': event.user_id,
-                'start_datetime': event.start_datetime,
-                'comment': event.comment,
-                'telegram_username': telegram_username,
-                'event_participants': event.participants
-            }
-            events_info.append(event_info)
-
+        events_info = await parse_events(events_in_location)
         location['events'] = events_info
 
     return {'telegram_id': telegram_id, 'response': locations}
 
 
-@app.get('/users/', tags=['Users'])
-async def get_all_users(db=Depends(get_db)):
-    """Функция получения всех user."""
-    try:
-        users = db.query(User).all()
-
-        if not users:
-            raise HTTPException(
-                status_code=404,
-                detail='Нет доступных пользователей')
-
-        users_data = [{
-            'id': user.id,
-            'telegram_id': user.telegram_id,
-            'telegram_username': user.telegram_username,
-            'role': user.role,
-            'first_name': user.first_name,
-            'last_name': user.last_name,
-            'language_code': user.language_code,
-            'is_bot': user.is_bot,
-            'created_date': user.created_date,
-            'modified_date': user.modified_date,
-            } for user in users]
-
-        return users_data
-    except SQLAlchemyError as e:
-        db.rollback()
-        logger.error(f'Ошибка при получении списка пользователей: {str(e)}')
-        raise HTTPException(status_code=500, detail='Database error')
-
-
-@app.get('/users/{telegram_id}/', tags=['Users'])
-async def get_user(
-        telegram_id: str,
-        db=Depends(get_db)):
-    """Функция получения user."""
-    try:
-        db_user = db.query(User).filter_by(
-            telegram_id=telegram_id).one_or_none()
-
-        if db_user is None:
-            raise HTTPException(
-                status_code=404,
-                detail='Ошибка при запросе user')
-        return {
+async def parse_user(db_user):
+    return {
             'id': db_user.id,
             'telegram_id': db_user.telegram_id,
             'telegram_username': db_user.telegram_username,
@@ -446,6 +390,43 @@ async def get_user(
             'created_date': db_user.created_date,
             'modified_date': db_user.modified_date,
             }
+
+
+@app.get('/users/', tags=['Users'])
+async def get_all_users(
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция получения всех пользователей."""
+    try:
+        users = db.query(User).all()
+
+        if not users:
+            raise HTTPException(
+                status_code=404,
+                detail='Нет доступных пользователей')
+
+        users_data = [parse_user(user) for user in users]
+
+        return users_data
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f'Ошибка при получении списка пользователей: {str(e)}')
+        raise HTTPException(status_code=500, detail='Database error')
+
+
+@app.get('/users/{telegram_id}/', tags=['Users'])
+async def get_user(
+        telegram_id: str,
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция получения пользователя по telegram_id."""
+    try:
+        db_user = db.query(User).filter_by(
+            telegram_id=telegram_id).one_or_none()
+
+        if db_user is None:
+            raise HTTPException(
+                status_code=404,
+                detail='Ошибка при запросе user')
+        return await parse_user(db_user)
     except SQLAlchemyError as e:
         db.rollback()
         logger.error(
@@ -454,10 +435,10 @@ async def get_user(
 
 
 class UserRequest(BaseModel):
-    """Влидация handle_messages."""
+    """Влидация для пользовтеля."""
     telegram_id: str
     username: Optional[str]
-    role: str = 'participant'
+    # role: str = 'participant'
     first_name: Optional[str]
     last_name: Optional[str]
     language_code: Optional[str]
@@ -465,8 +446,10 @@ class UserRequest(BaseModel):
 
 
 @app.post('/users/', tags=['Users'])
-async def create_user(request: UserRequest, db=Depends(get_db)):
-    """Функция создания user."""
+async def create_user(
+        request: UserRequest,
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция создания пользователя."""
     telegram_id = request.telegram_id
     telegram_username = request.username
     # role = request.role
@@ -503,8 +486,10 @@ async def create_user(request: UserRequest, db=Depends(get_db)):
 
 @app.put('/users/{telegram_id}/', tags=['Users'])
 async def update_user(
-        telegram_id: str, request: UserRequest, db=Depends(get_db)):
-    """Функция обновления user по telegram_id."""
+        telegram_id: str,
+        request: UserRequest,
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция обновления пользователя по telegram_id."""
     new_telegram_username = request.username
     new_first_name = request.first_name
     new_last_name = request.last_name
@@ -537,8 +522,9 @@ async def update_user(
 
 
 @app.get('/users/places/subscription/', tags=['Users places subscription'])
-async def get_all_places_subscription(db=Depends(get_db)):
-    """Функция получения всех places subscription."""
+async def get_all_places_subscription(
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция получения всех подписок на все места."""
     try:
         users = db.query(User).all()
 
@@ -577,8 +563,8 @@ async def get_all_places_subscription(db=Depends(get_db)):
          tags=['Users places subscription'])
 async def get_user_places_subscription(
         telegram_id: str,
-        db=Depends(get_db)):
-    """Функция получения подписок на place."""
+        db: Session = Depends(get_db)):
+    """Функция получения подписок пользователя на места по telegram_id."""
     try:
         user_places_subscription = (
             db.query(place_user_association.c.place_id)
@@ -594,18 +580,9 @@ async def get_user_places_subscription(
         place_ids = [result[0] for result in user_places_subscription.all()]
 
         if not place_ids:
-            # try:
-            #     db_message = db.query(Message).filter_by(
-            #         message='places_sub_instruction_1').one_or_none()
-            #     if db_message is None:
             error = 'Ошибка при запросе places_sub_instruction_1'
             logger.error(error)
             raise HTTPException(status_code=404, detail=error)
-            #     return {'telegram_id': telegram_id,
-            #             'response': db_message.response}
-            # except SQLAlchemyError as e:
-            #     logger.error(f'error: {str(e)}')
-            #     raise HTTPException(status_code=500, detail='Database error')
 
         current_time = datetime.now()
         locations = await get_places_by_id(place_ids)
@@ -627,22 +604,7 @@ async def get_user_places_subscription(
             )
 
             if events_in_location:
-                events_info = []
-                for event, telegram_username in events_in_location:
-                    event_info = {
-                        'name': event.name,
-                        'description': event.description,
-                        'place_id': event.place_id,
-                        'end_datetime': event.end_datetime,
-                        'id': event.id,
-                        'user_id': event.user_id,
-                        'start_datetime': event.start_datetime,
-                        'comment': event.comment,
-                        'telegram_username': telegram_username,
-                        'event_participants': event.participants
-                    }
-                    events_info.append(event_info)
-
+                events_info = await parse_events(events_in_location)
                 location['events'] = events_info
 
         return {'telegram_id': telegram_id, 'response': locations}
@@ -653,7 +615,7 @@ async def get_user_places_subscription(
 
 
 class PlaceSubscriptionRequest(BaseModel):
-    """Влидация create_place_subscription."""
+    """Влидация подписки пользователя на место."""
     telegram_id: str
     place_id: str
 
@@ -661,8 +623,8 @@ class PlaceSubscriptionRequest(BaseModel):
 @app.post('/users/places/subscription/', tags=['Users places subscription'])
 async def create_place_subscription(
         request: PlaceSubscriptionRequest,
-        db=Depends(get_db)):
-    """Функция создания подписки на place."""
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция создания подписки пользователя на место."""
     telegram_id = request.telegram_id
     place_id = request.place_id
 
@@ -701,8 +663,8 @@ async def create_place_subscription(
 async def delete_user_place_subscription(
         telegram_id: str,
         place_id: str = Query(...),
-        db=Depends(get_db)):
-    """Функция удаления подписки на place."""
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция удаления подписки пользоваетеля на место."""
 
     try:
         user = db.query(User).filter(
@@ -736,8 +698,8 @@ async def delete_user_place_subscription(
 @app.get('/users/{telegram_id}/subscription/', tags=['Users subscription'])
 async def get_user_subscription(
         telegram_id: str,
-        db=Depends(get_db)):
-    """Функция получения подписок пользователей."""
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция получения подписок пользователя на других пользователей."""
     try:
         user = db.query(User).filter_by(telegram_id=telegram_id).one_or_none()
         subscriptions = [{
@@ -753,7 +715,7 @@ async def get_user_subscription(
 
 
 class UserSubscriptionRequest(BaseModel):
-    """Влидация create_user_subscription."""
+    """Влидация подписки пользователя на пользователя."""
     telegram_id: str
     subscription_id: str
 
@@ -761,13 +723,12 @@ class UserSubscriptionRequest(BaseModel):
 @app.post('/users/subscription/', tags=['Users subscription'])
 async def create_user_subscription(
         request: UserSubscriptionRequest,
-        db=Depends(get_db)):
-    """Функция создания подписки на User."""
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция создания подписки пользователя на пользователя."""
     telegram_id = request.telegram_id
     subscription_id = request.subscription_id
 
     try:
-
         telegram_user = db.query(User).filter_by(
             telegram_id=telegram_id).one_or_none()
         subscription_user = db.query(User).filter_by(
@@ -801,8 +762,8 @@ async def create_user_subscription(
 async def delete_user_subscription(
         telegram_id: str,
         subscription_id: str = Query(...),
-        db=Depends(get_db)):
-    """Функция удаления подписок пользователей."""
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция удаления подписки пользователя на пользователя."""
     try:
         user = db.query(User).filter_by(telegram_id=telegram_id).one_or_none()
         subscription = db.query(User).filter_by(
@@ -829,7 +790,7 @@ async def delete_user_subscription(
 
 
 class EventSubscriptionRequest(BaseModel):
-    """Влидация create_event_subscription."""
+    """Влидация подписки на событие."""
     telegram_id: str
     event_id: int
 
@@ -837,8 +798,8 @@ class EventSubscriptionRequest(BaseModel):
 @app.post('/users/events/subscription/', tags=['Users events subscription'])
 async def create_event_subscription(
         request: EventSubscriptionRequest,
-        db=Depends(get_db)):
-    """Функция создания подписки на event."""
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция создания подписки на событие."""
     telegram_id = request.telegram_id
     event_id = request.event_id
 
@@ -868,14 +829,15 @@ async def create_event_subscription(
         raise HTTPException(status_code=500, detail='Database error')
 
 
-async def is_event_finished(event):
+async def is_event_finished(event: datetime) -> bool:
     current_time = datetime.now()
     return event < current_time
 
 
 @app.get('/events/', tags=['Events'])
-async def get_all_events(db=Depends(get_db)):
-    """Функция получения всех Events."""
+async def get_all_events(
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция получения всех подписок всех пользователей."""
     try:
         events = db.query(Event).order_by(desc(Event.start_datetime)).all()
 
@@ -904,7 +866,7 @@ async def get_all_events(db=Depends(get_db)):
 
 
 class EventRequest(BaseModel):
-    """Влидация create_event."""
+    """Влидация создания события."""
     name: str = Field(max_length=50)
     description: str
     telegram_id: str
@@ -914,8 +876,10 @@ class EventRequest(BaseModel):
 
 
 @app.post('/events/', tags=['Events'])
-async def create_event(request: EventRequest, db=Depends(get_db)):
-    """Функция создания event."""
+async def create_event(
+        request: EventRequest,
+        db: Session = Depends(get_db)) -> Union[dict, Any]:
+    """Функция создания события."""
     name = request.name
     description = request.description
     telegram_id = request.telegram_id
@@ -965,19 +929,5 @@ if __name__ == '__main__':
     file_handler = logging.FileHandler('backend_main.log')
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
-
-    # handler = logging.StreamHandler()
-    # handler.setFormatter(formatter)
-    # logger.addHandler(handler)
-
-    # async def log_request(request: Request, call_next):
-    #     body = await request.body()
-    #     logger.info(
-    #         f"Request: {request.method} {request.url} - '
-    #         f'Body: {body.decode()}")
-    #     response = await call_next(request)
-    #     return response
-
-    # app.middleware("http")(log_request)
 
     uvicorn.run(app, host="0.0.0.0", port=8000)

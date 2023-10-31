@@ -9,6 +9,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def get_db() -> Session:
+    """Создание соединения с postgresql."""
     db = SessionLocal()
     try:
         yield db
