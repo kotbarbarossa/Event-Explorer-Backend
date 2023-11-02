@@ -52,6 +52,8 @@ async def get_region_boundingbox(region_name: str) -> Union[dict, Any]:
     url = ('https://nominatim.openstreetmap.org/'
            f'search?format=json&q={region_name}')
     response = await get_response(url=url)
+    if not response:
+        return [0 for _ in range(4)]
     return response[0]['boundingbox']
 
 
