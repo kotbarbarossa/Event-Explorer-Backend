@@ -404,7 +404,7 @@ async def get_all_users(
                 status_code=404,
                 detail='Нет доступных пользователей')
 
-        users_data = [parse_user(user) for user in users]
+        users_data = [await parse_user(user) for user in users]
 
         return users_data
     except SQLAlchemyError as e:
